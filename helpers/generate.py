@@ -59,8 +59,8 @@ def generate(args, root, frame = 0, return_latent=False, return_sample=False, re
             init_latent = root.model.get_first_stage_encoding(root.model.encode_first_stage(init_image))  # move to latent space        
 
     if not args.use_init and args.strength > 0 and args.strength_0_no_init:
-        print("\nNo init image, but strength > 0. Strength has been auto set to 0, since use_init is False.")
-        print("If you want to force strength > 0 with no init, please set strength_0_no_init to False.\n")
+        #print("\nNo init image, but strength > 0. Strength has been auto set to 0, since use_init is False.")
+        #print("If you want to force strength > 0 with no init, please set strength_0_no_init to False.\n")
         args.strength = 0
 
     # Mask functions
@@ -228,14 +228,7 @@ def generate(args, root, frame = 0, return_latent=False, return_sample=False, re
                             z_enc = sampler.stochastic_encode(init_latent, torch.tensor([t_enc]*batch_size).to(root.device))
                         else:
                             z_enc = torch.randn([args.n_samples, args.C, args.H // args.f, args.W // args.f], device=root.device)
-                        if args.sampler == 'ddim':
-                            samples = sampler.decode(z_enc, 
-                                                     c, 
-                                                     t_enc, 
-                                                     unconditional_guidance_scale=args.scale,
-                                                     unconditional_conditioning=uc,
-                                                     img_callback=callback)
-                        elif args.sampler == 'plms': # no "decode" function in plms, so use "sample"
+                        if args.sampler in ['plms','ddim']: # no "decode" function in plms, so use "sample"
                             shape = [args.C, args.H // args.f, args.W // args.f]
                             samples, _ = sampler.sample(S=args.steps,
                                                             conditioning=c,
@@ -265,7 +258,7 @@ def generate(args, root, frame = 0, return_latent=False, return_sample=False, re
                         else:
                             raise Exception("Cannot overlay the masked image without an init image to overlay")
 
-                        if args.mask_sample is None:
+                        if args.mask_sample is None or args.using_vid_init:
                             args.mask_sample = prepare_overlay_mask(args, root, img_original.shape)
 
                         x_samples = img_original * args.mask_sample + x_samples * ((args.mask_sample * -1.0) + 1)
@@ -279,7 +272,21 @@ def generate(args, root, frame = 0, return_latent=False, return_sample=False, re
                         results.append(c.clone())
 
                     for x_sample in x_samples:
-                        x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
-                        image = Image.fromarray(x_sample.astype(np.uint8))
+                        def uint_number(datum, number):
+                            if number == 8:
+                                datum = Image.fromarray(datum.astype(np.uint8))
+                            elif number == 32:
+                                datum = datum.astype(np.float32)
+                            else:
+                                datum = datum.astype(np.uint16)
+                            return datum
+                        if args.bit_depth_output == 8:
+                            exponent_for_rearrange = 1
+                        elif args.bit_depth_output == 32:
+                            exponent_for_rearrange = 0
+                        else:
+                            exponent_for_rearrange = 2
+                        x_sample = 255.**exponent_for_rearrange * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
+                        image = uint_number(x_sample, args.bit_depth_output)
                         results.append(image)
     return results
